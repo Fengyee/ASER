@@ -15,7 +15,7 @@
     "valid_every": 500,
     "total_steps": 5000,
     "use_cuda": true,
-    "gpu": 1,
+    "gpu": 0,
     "max_post_length": 25,
     "max_response_length": 20,
     "max_aser_triples": 20,

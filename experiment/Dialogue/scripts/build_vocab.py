@@ -1,6 +1,7 @@
 from collections import Counter
-from dialogue.toolbox.vocab import Vocabulary, UNK_WORD, PAD_WORD, BOS_WORD, EOS_WORD, get_pretrained_embedding
 import sys
+sys.path.append('/home/hfengac/Desktop/comp5222proj/ASER/experiment/Dialogue')
+from dialogue.toolbox.vocab import Vocabulary, UNK_WORD, PAD_WORD, BOS_WORD, EOS_WORD, get_pretrained_embedding
 import torch
 from tqdm import tqdm
 import ujson as json

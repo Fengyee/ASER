@@ -85,7 +85,7 @@ class AttnScore(nn.Module):
             align = self.linear(torch.cat([h1, h2, h1 * h2], dim=3)).squeeze(-1)
         if h1_lens is not None:
             mask = sequence_mask(h1_lens, max_len=seq_l1).unsqueeze(1)
-            align.data.masked_fill_(1 - mask, -1e8)
+            align.data.masked_fill_(~mask, -1e8)
         if normalize:
             attn_weights = F.softmax(align, dim=2)
         else:

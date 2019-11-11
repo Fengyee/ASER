@@ -3,7 +3,7 @@
     "model": "seq2seq_attn",
     "data_dir": "data/",
     "data_cache_dir": "cache/exp_seq2seq_attn/data/",
-    "vocab_path": "data/avocab.pt",
+    "vocab_path": "data/vocab.pt",
     "save_model": "cache/exp_seq2seq_attn/model",
     "save_results": "cache/exp_seq2seq_attn/results",
     "save_log": "cache/exp_seq2seq_attn/log/",
