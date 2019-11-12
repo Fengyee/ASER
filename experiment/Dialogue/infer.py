@@ -27,7 +27,7 @@ def model_infer(model_path, inp_path, outp_path):
     pred_list = []
     total_loss = 0
     total_word_num = 0
-    for batch in tqdm(test_iter):
+    for batch in tqdm(test_iter, total=2294):
         result_dict = model.run_batch(batch)
         total_loss += result_dict["loss"].item()
         total_word_num += result_dict["num_words"]

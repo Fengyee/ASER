@@ -5,7 +5,7 @@ from dialogue.models.base import BaseDeepModel
 from dialogue.toolbox.beam import BeamSeqs
 from dialogue.toolbox.layers import SortedGRU, Attention
 from dialogue.toolbox.utils import batch_unpadding
-
+from pytorch_pretrained_bert.modeling import BertModel
 
 class ASEREncoderDecoder(BaseDeepModel):
     def __init__(self, loss_fn, opt):
@@ -31,6 +31,10 @@ class ASEREncoderDecoder(BaseDeepModel):
         self.dropout = nn.Dropout(opt.model.dropout)
         self.concat = nn.Linear(
             rnn_hidden_size * 2 + rnn_hidden_size * opt.model.use_word_attn, rnn_hidden_size)
+        #TODO
+        self.bert2hiddensize = nn.Linear(768, opt.model.rnn_hidden_size)
+        self.bert2hiddensize2 = nn.Linear(768, opt.model.rnn_hidden_size)
+
         self.fc = nn.Linear(rnn_hidden_size, opt.model.word_vocab_size)
 
         self.loss_fn = loss_fn
@@ -38,12 +42,24 @@ class ASEREncoderDecoder(BaseDeepModel):
         self.n_layers = opt.model.n_layers
         self.use_word_attn = opt.model.use_word_attn
         self.use_cuda = opt.meta.use_cuda
+        self.bertmodel = BertModel.from_pretrained('bert-base-uncased')
 
-    def encode(self, encoder_inputs, encoder_lens):
-        encoder_embeds = self.encoder_embedding(encoder_inputs)
-        encoder_outputs, last_hidden = self.encoder(
-            encoder_embeds, encoder_lens)
-        return encoder_outputs, last_hidden
+
+    def encode(self, encoder_inputs, encoder_lens, bert_post_ids, bert_post_masks):
+        # encoder_embeds = self.encoder_embedding(encoder_inputs)
+        # encoder_outputs, last_hidden = self.encoder(
+        #     encoder_embeds, encoder_lens)
+        encoder_outputs2, last_hidden2 = self.bertmodel(bert_post_ids, token_type_ids=None, attention_mask=bert_post_masks,output_all_encoded_layers=False)
+        # TODO
+        b, s, _ = encoder_outputs2.size()
+        encoder_outputs2 = self.bert2hiddensize(encoder_outputs2.reshape(b*s, 768))
+        encoder_outputs2 = encoder_outputs2.reshape(b, s, 512)
+
+        last_hidden2 = self.bert2hiddensize2(last_hidden2)
+        last_hidden2 = last_hidden2.unsqueeze(0)
+        last_hidden2 = last_hidden2.repeat(self.n_layers, 1, 1)
+
+        return encoder_outputs2, last_hidden2
 
     def encode_events(self, event_id_inputs, event_triple_inputs):
         event_id_embs = self.event_id_embedding(event_id_inputs)
@@ -74,11 +90,12 @@ class ASEREncoderDecoder(BaseDeepModel):
         return decoder_outputs, last_hidden
 
     def forward(self, encoder_inputs, encoder_lens, decoder_inputs, decoder_lens,
-                event_id_inputs, event_triple_inputs, event_lens):
-        encoder_outputs, encoder_last_hidden = self.encode(
-            encoder_inputs, encoder_lens)
+                event_id_inputs, event_triple_inputs, event_lens,
+                bert_post_ids, bert_responses_ids, bert_post_masks, bert_responses_masks):
+        encoder_outputs, encoder_last_hidden = self.encode(encoder_inputs, encoder_lens,
+            bert_post_ids, bert_post_masks)
 
-        encoder_last_hidden = self._fix_hidden(encoder_last_hidden)
+        # encoder_last_hidden = self._fix_hidden(encoder_last_hidden)
 
         event_embs = self.encode_events(event_id_inputs, event_triple_inputs)
 
@@ -90,10 +107,10 @@ class ASEREncoderDecoder(BaseDeepModel):
         return outputs
 
     def generate(self, encoder_inputs, encoder_lens,decoder_start_input,
-                 event_id_inputs, event_triple_inputs, event_lens,
+                 event_id_inputs, event_triple_inputs, event_lens, bert_post_ids, bert_post_masks, 
                  max_len, beam_size=1, eos_val=None):
-        encoder_outputs, encoder_last_hidden = self.encode(encoder_inputs, encoder_lens)
-        encoder_last_hidden = self._fix_hidden(encoder_last_hidden)
+        encoder_outputs, encoder_last_hidden = self.encode(encoder_inputs, encoder_lens, bert_post_ids, bert_post_masks)  # TODO
+        # encoder_last_hidden = self._fix_hidden(encoder_last_hidden)
 
         event_embs = self.encode_events(event_id_inputs, event_triple_inputs)
 
@@ -135,6 +152,7 @@ class ASEREncoderDecoder(BaseDeepModel):
         self.decoder.flatten_parameters()
 
     def run_batch(self, batch):
+        # print(batch.bert_post_ids)
         enc_inps, enc_lens = batch.enc_inps
         dec_inps, dec_lens = batch.dec_inps
         dec_tgts, _ = batch.dec_tgts
@@ -144,7 +162,12 @@ class ASEREncoderDecoder(BaseDeepModel):
             decoder_inputs=dec_inps, decoder_lens=dec_lens,
             event_id_inputs=batch.aser_id_inps,
             event_triple_inputs=batch.aser_triple_inps,
-            event_lens=batch.aser_lens)
+            event_lens=batch.aser_lens,
+            bert_post_ids=batch.bert_post_ids,
+            bert_responses_ids=batch.bert_responses_ids,
+            bert_post_masks=batch.bert_post_masks,
+            bert_responses_masks=batch.bert_responses_masks
+            )
 
         decoder_probs_pack = dec_probs.view(-1, dec_probs.size(2))
         decoder_targets_pack = dec_tgts.view(-1)
@@ -169,6 +192,8 @@ class ASEREncoderDecoder(BaseDeepModel):
                               event_id_inputs=batch.aser_id_inps,
                               event_triple_inputs=batch.aser_triple_inps,
                               event_lens=batch.aser_lens,
+                              bert_post_ids=batch.bert_post_ids,
+                              bert_post_masks=batch.bert_post_masks,
                               max_len=max_len, beam_size=beam_size, eos_val=eos_val).squeeze(2)
         preds = preds.data.cpu().numpy()
         return preds

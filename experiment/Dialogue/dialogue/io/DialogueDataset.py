@@ -5,6 +5,9 @@ import torch.utils.data
 from tqdm import tqdm
 import ujson as json
 from dialogue.toolbox.utils import padding_list, chunks
+from pytorch_pretrained_bert import BertTokenizer
+
+tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
 
 
 def all_len_eq(_list, x):
@@ -21,6 +24,11 @@ class Batch(object):
         self.dec_inps = None
         self.dec_start_inps = None
         self.dec_tgts = None
+
+        self.bert_post_ids = None
+        self.bert_responses_ids = None
+        self.bert_post_masks = None
+        self.bert_responses_masks = None
 
         self.aser_lens = None
         self.aser_id_inps = None
@@ -81,6 +89,27 @@ class Batch(object):
             t[7], self.opt.max_knowly_triples, [pad_idx, pad_idx, pad_idx]) for t in data]
         self.knowly_triple_inps = torch.LongTensor(knowly_triple_inps)
 
+        # TODO: this might needs some padding or other treatments in the future
+        bert_posts_lens = [len(t[8]) for t in data]
+        # print(bert_posts_lens, self.opt.max_post_length)
+        max_post_length = self.opt.max_post_length + 1
+        bert_posts_masks = [
+            ([1]*l + [0]*(max_post_length - l))[:max_post_length]
+            for l in bert_posts_lens]
+        bert_post_ids = [padding_list(t[8], max_post_length, 0) for t in data]
+
+        max_response_length = self.opt.max_response_length + 1
+        bert_responses_lens = [len(t[9]) for t in data]
+        bert_responses_masks = [
+            ([1]*l + [0]*(max_response_length - l))[:max_response_length]
+            for l in bert_responses_lens]
+        bert_responses_ids = [padding_list(t[9], max_response_length, 0) for t in data]
+        # print(bert_post_ids)
+        self.bert_post_ids = torch.LongTensor(bert_post_ids)
+        self.bert_responses_ids = torch.LongTensor(bert_responses_ids)
+        self.bert_post_masks = torch.LongTensor(bert_posts_masks)
+        self.bert_responses_masks = torch.LongTensor(bert_responses_masks)
+
     def cuda(self):
         self.enc_inps = [t.cuda(async=True) for t in self.enc_inps]
         self.dec_inps = [t.cuda(async=True) for t in self.dec_inps]
@@ -96,6 +125,29 @@ class Batch(object):
         self.knowly_id_inps = self.knowly_id_inps.cuda(async=True)
         self.knowly_triple_inps = self.knowly_triple_inps.cuda(async=True)
 
+        self.bert_post_ids = self.bert_post_ids.cuda(async=True)
+        self.bert_responses_ids = self.bert_responses_ids.cuda(async=True)
+        self.bert_post_masks = self.bert_post_masks.cuda(async=True)
+        self.bert_responses_masks = self.bert_responses_masks.cuda(async=True)
+
+    def log(self):
+        print(self.opt)
+        print(self.enc_inps)
+        print(self.dec_inps)
+        print(self.dec_start_inps)
+        print(self.dec_tgts)
+
+        print(self.aser_lens)
+        print(self.aser_id_inps)
+        print(self.aser_triple_inps)
+
+        print(self.omcs_lens)
+        print(self.omcs_id_inps)
+        print(self.omcs_triple_inps)
+
+        print(self.knowly_lens)
+        print(self.knowly_id_inps)
+        print(self.knowly_triple_inps)
 
 class DialogueDataset(torch.utils.data.Dataset):
     def __init__(self, data_path, vocabs, opt, data_cache_path=None):
@@ -123,6 +175,8 @@ class DialogueDataset(torch.utils.data.Dataset):
                 omcs_triples_list = []
                 knowly_ids_list = []
                 knowly_triples_list = []
+                bert_posts = []
+                bert_responses = []
                 for res in res_list:
                     records = res.get()
                     posts.extend(records[0])
@@ -133,19 +187,29 @@ class DialogueDataset(torch.utils.data.Dataset):
                     omcs_triples_list.extend(records[5])
                     knowly_ids_list.extend(records[6])
                     knowly_triples_list.extend(records[7])
+                    bert_posts.extend(records[8])
+                    bert_responses.extend(records[9])
                 self.data = [(posts[i], responses[i],
                               aser_ids_list[i], aser_triples_list[i],
                               omcs_ids_list[i], omcs_triples_list[i],
-                              knowly_ids_list[i], knowly_triples_list[i]
+                              knowly_ids_list[i], knowly_triples_list[i],
+                              bert_posts[i], bert_responses[i]
                               )
                              for i in range(len(posts))]
             else:
                 t = self.load_data(raw_lines, vocabs)
                 self.data = [(t[0][i], t[1][i], t[2][i], t[3][i], t[4][i],
-                              t[5][i], t[6][i], t[7][i])
+                              t[5][i], t[6][i], t[7][i], t[8][i], t[9][i])
                              for i in range(len(t[0]))]
             if data_cache_path:
                 torch.save(self.data, data_cache_path)
+
+    def line2tokenid (self,line):
+        line = line.strip()
+        line = "[CLS] " + line + " [SEP]"
+        tokenized_text = tokenizer.tokenize(line)
+        indexed_tokens = tokenizer.convert_tokens_to_ids(tokenized_text)
+        return indexed_tokens
 
     def load_data(self, lines, vocabs):
         posts = []
@@ -156,6 +220,8 @@ class DialogueDataset(torch.utils.data.Dataset):
         omcs_triples_list = []
         knowly_ids_list = []
         knowly_triples_list = []
+        bert_posts = []
+        bert_responses = []
         for line in lines:
             record = json.loads(line)
             post_idx = [vocabs["word"].to_idx(t) for t in record["post"].lower().split()[:self.opt.max_post_length]]
@@ -193,8 +259,15 @@ class DialogueDataset(torch.utils.data.Dataset):
                             vocabs["knowlywood_event"].to_idx(e2)])
             knowly_triples_list.append(tmp)
 
+            bert_p = self.line2tokenid(record["post"].lower())
+            bert_posts.append(bert_p)
+
+            bert_r = self.line2tokenid(record["response"].lower())
+            bert_responses.append(bert_r)
+
         return posts, responses, aser_ids_list, aser_triples_list,\
-               omcs_ids_list, omcs_triples_list, knowly_ids_list, knowly_triples_list
+               omcs_ids_list, omcs_triples_list, knowly_ids_list, knowly_triples_list,\
+                   bert_posts, bert_responses
 
     def __getitem__(self, index):
         """
