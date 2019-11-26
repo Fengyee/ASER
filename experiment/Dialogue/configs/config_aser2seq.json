@@ -13,7 +13,7 @@
     "epochs": null,
     "print_every": 100,
     "valid_every": 500,
-    "total_steps": 5000,
+    "total_steps": 10000,
     "use_cuda": true,
     "gpu": 0,
     "max_post_length": 25,
