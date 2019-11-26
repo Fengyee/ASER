@@ -17,11 +17,11 @@ class ASEREncoderDecoder(BaseDeepModel):
         self.event_id_embedding = nn.Embedding(opt.model.aser_vocab_size, rnn_hidden_size // 4)
         self.event_embedding = nn.Embedding(opt.model.aser_event_vocab_size, rnn_hidden_size // 4)
         self.relation_embedding = nn.Embedding(opt.model.aser_relation_vocab_size, rnn_hidden_size // 4)
-        self.encoder = SortedGRU(input_size=opt.model.word_embed_size,
-                                 hidden_size=opt.model.rnn_hidden_size // 2,
-                                 num_layers=opt.model.n_layers,
-                                 batch_first=True,
-                                 bidirectional=True)
+        # self.encoder = SortedGRU(input_size=opt.model.word_embed_size,
+        #                          hidden_size=opt.model.rnn_hidden_size // 2,
+        #                          num_layers=opt.model.n_layers,
+        #                          batch_first=True,
+        #                          bidirectional=True)
         self.decoder = SortedGRU(input_size=opt.model.word_embed_size,
                                  hidden_size=opt.model.rnn_hidden_size,
                                  num_layers=opt.model.n_layers,
@@ -32,8 +32,8 @@ class ASEREncoderDecoder(BaseDeepModel):
         self.concat = nn.Linear(
             rnn_hidden_size * 2 + rnn_hidden_size * opt.model.use_word_attn, rnn_hidden_size)
         #TODO
-        self.bert2hiddensize = nn.Linear(768, opt.model.rnn_hidden_size)
-        self.bert2hiddensize2 = nn.Linear(768, opt.model.rnn_hidden_size)
+        # self.bert2hiddensize = nn.Linear(768, opt.model.rnn_hidden_size)
+        # self.bert2hiddensize2 = nn.Linear(768, opt.model.rnn_hidden_size)
 
         self.fc = nn.Linear(rnn_hidden_size, opt.model.word_vocab_size)
 
@@ -43,6 +43,8 @@ class ASEREncoderDecoder(BaseDeepModel):
         self.use_word_attn = opt.model.use_word_attn
         self.use_cuda = opt.meta.use_cuda
         self.bertmodel = BertModel.from_pretrained('bert-base-uncased')
+        for p in self.bertmodel.parameters():
+            p.requires_grad = False
 
 
     def encode(self, encoder_inputs, encoder_lens, bert_post_ids, bert_post_masks):
@@ -51,11 +53,11 @@ class ASEREncoderDecoder(BaseDeepModel):
         #     encoder_embeds, encoder_lens)
         encoder_outputs2, last_hidden2 = self.bertmodel(bert_post_ids, token_type_ids=None, attention_mask=bert_post_masks,output_all_encoded_layers=False)
         # TODO
-        b, s, _ = encoder_outputs2.size()
-        encoder_outputs2 = self.bert2hiddensize(encoder_outputs2.reshape(b*s, 768))
-        encoder_outputs2 = encoder_outputs2.reshape(b, s, 512)
+        # b, s, _ = encoder_outputs2.size()
+        # encoder_outputs2 = self.bert2hiddensize(encoder_outputs2.reshape(b*s, 768))
+        # encoder_outputs2 = encoder_outputs2.reshape(b, s, 512)
 
-        last_hidden2 = self.bert2hiddensize2(last_hidden2)
+        # last_hidden2 = self.bert2hiddensize2(last_hidden2)
         last_hidden2 = last_hidden2.unsqueeze(0)
         last_hidden2 = last_hidden2.repeat(self.n_layers, 1, 1)
 
@@ -73,8 +75,10 @@ class ASEREncoderDecoder(BaseDeepModel):
     def decode(self, encoder_outputs, encoder_lens,
                event_embs, event_lens,
                last_hidden, decoder_inputs,
+               bert_responses_ids=None, bert_responses_masks=None,
                decoder_lens=None):
         decoder_embeds = self.decoder_embedding(decoder_inputs)
+        # decoder_embeds2 = self.bertmodel.embeddings(bert_responses_ids, bert_responses_masks)
         decoder_outputs, last_hidden = self.decoder(
             decoder_embeds, decoder_lens, last_hidden)
         event_context, _ = self.attn(decoder_outputs, event_embs,
@@ -102,7 +106,8 @@ class ASEREncoderDecoder(BaseDeepModel):
         decoder_outputs, _ = self.decode(
             encoder_outputs, encoder_lens,
             event_embs, event_lens,
-            encoder_last_hidden, decoder_inputs, decoder_lens)
+            encoder_last_hidden, decoder_inputs, 
+            bert_responses_ids, bert_responses_masks, decoder_lens)
         outputs = F.log_softmax(decoder_outputs, dim=2)
         return outputs
 
@@ -147,9 +152,9 @@ class ASEREncoderDecoder(BaseDeepModel):
                             hidden[1:hidden.size(0):2]], 2)
         return hidden
 
-    def flatten_parameters(self):
-        self.encoder.flatten_parameters()
-        self.decoder.flatten_parameters()
+    # def flatten_parameters(self):
+    #     self.encoder.flatten_parameters()
+    #     self.decoder.flatten_parameters()
 
     def run_batch(self, batch):
         # print(batch.bert_post_ids)
