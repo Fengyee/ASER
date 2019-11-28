@@ -1,3 +1,7 @@
+import math
+import os
+
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -43,8 +47,10 @@ class ASEREncoderDecoder(BaseDeepModel):
         self.use_word_attn = opt.model.use_word_attn
         self.use_cuda = opt.meta.use_cuda
         self.bertmodel = BertModel.from_pretrained('bert-base-uncased')
+        # ========== fix bert ==========
         for p in self.bertmodel.parameters():
             p.requires_grad = False
+        # ========== fix bert ==========
 
 
     def encode(self, encoder_inputs, encoder_lens, bert_post_ids, bert_post_masks):
@@ -76,8 +82,30 @@ class ASEREncoderDecoder(BaseDeepModel):
                event_embs, event_lens,
                last_hidden, decoder_inputs,
                bert_responses_ids=None, bert_responses_masks=None,
-               decoder_lens=None):
+               decoder_lens=None, pos=None):
         decoder_embeds = self.decoder_embedding(decoder_inputs)
+
+        # ========== pos embed ==========
+        batch_size, seq_len, embed_len = decoder_embeds.size()
+        if seq_len == 1:
+            pos_embeds_np = np.array([[[
+                [math.sin(pos/(10000**(2*i/embed_len))), math.cos(pos/(10000**(2*i/embed_len)))] for i in range(embed_len//2)
+            ]]])
+            pos_embeds_np = np.reshape(pos_embeds_np, [1, 1, embed_len])
+            pos_embeds = torch.from_numpy(pos_embeds_np).to(decoder_embeds.get_device()).to(decoder_embeds.dtype)
+        else:
+            pos_embeds_np = np.array([[
+                [
+                    [math.sin(pos_/(10000**(2*i/embed_len))), math.cos(pos_/(10000**(2*i/embed_len)))] for i in range(embed_len//2)
+                ] for pos_ in range(1, seq_len+1)
+            ]])
+            pos_embeds_np = np.reshape(pos_embeds_np, [1, seq_len, embed_len])
+            pos_embeds_np = np.tile(pos_embeds_np, [batch_size, 1, 1])
+            pos_embeds = torch.from_numpy(pos_embeds_np).to(decoder_embeds.get_device()).to(decoder_embeds.dtype)
+        # decoder_embeds = torch.cat([decoder_embeds, pos_embeds], dim=-1)
+        decoder_embeds = decoder_embeds + pos_embeds
+        # ========== pos embed ==========
+
         # decoder_embeds2 = self.bertmodel.embeddings(bert_responses_ids, bert_responses_masks)
         decoder_outputs, last_hidden = self.decoder(
             decoder_embeds, decoder_lens, last_hidden)
@@ -131,8 +159,13 @@ class ASEREncoderDecoder(BaseDeepModel):
                     continue
                 out, last_hidden = self.decode(encoder_outputs, encoder_lens,
                                                event_embs, event_lens,
-                                               last_hidden, last_token.unsqueeze(0))
-                _output = F.log_softmax(out.squeeze(0), dim=1).squeeze(0)
+                                               last_hidden, last_token.unsqueeze(0), pos=i+1)
+                # ========== EOS attenuation ==========
+                out_flat = out.flatten()
+                expect_len = int(max_len*.6)
+                out_flat[eos_val] -= max(2 * (expect_len-i-1)/expect_len, 0)
+                # ========== EOS attenuation ==========
+                _output = F.log_softmax(out_flat, dim=0)
                 scores, tokens = _output.topk(beam_size * 2)
                 for k in range(beam_size * 2):
                     score, token = scores.data[k], tokens[k]
